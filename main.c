@@ -3,4 +3,4 @@
 #define go 1;
 int i = 1;
 int j ;
-int afsd;
+int d=1;
