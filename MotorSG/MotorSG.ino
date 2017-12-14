@@ -146,13 +146,13 @@ void setup(void)
   //RTC
   ////////////////////////////////////////////////////////////////////////////////////////////////
   if (! rtc.begin()) {
-    Serial.println("Couldn't find RTC");
+    Serial.println("RTC nicht gefunden"); 
     while (1);
   }
   if (rtc.lostPower()) {
     Serial.println("RTC auf Initialwert gesetzt");  //Bei Spannungsverlust auf Initialwert
     rtc.adjust(DateTime(__DATE__, __TIME__));   //Datum des Sketches als Initialwert
-}
+  }
 
   
   Serial.println("Setup Ende");
@@ -256,7 +256,7 @@ void sendMSG(INT32U id) //ID für MSG
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void printZeit(void)
 {
- DateTime now = rtc.now();
+  DateTime now = rtc.now();
     Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
     Serial.print(", ");
     Serial.print(now.day(), DEC);
