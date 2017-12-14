@@ -2,8 +2,8 @@
 #include <SPI.h>                  //CAN-Interface
 #include <OneWire.h>              //Temp-Sensor
 #include <DallasTemperature.h>    //Temp-Sensor
-#include <Wire.h>
-#include <RTClib.h>
+#include <Wire.h>                 //RTC
+#include <RTClib.h>               //RTC
 
 //Makro
 #define CAN0_INT 2        //Interrupt für CAN Pin
@@ -249,6 +249,7 @@ void sendMSG(INT32U id) //ID für MSG
   delay(300);   // send data per 300ms
   Serial.println("sendMSG() Ende");
 }
+#
 ////////////////////////////////////////////////////////////////////////////////////////////////
 //RTC
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -269,7 +270,11 @@ void printZeit(void)
     Serial.print(':');
     Serial.print(now.second(), DEC);
     Serial.println("Uhr");
-
+/* Fuer Funktionen die alle x ablaufen sollen
+DateTime future (now + TimeSpan(3,2,11,33)); // tage, stunden, minuten, Sekunden
+Serial.print(future.minute(), DEC);
+future statt now gibt den Zeitpunkt in der Zukunft auf den man wartet aus
+*/
 }
 
 interrupts(); //Interrupts einschalten vor main()
