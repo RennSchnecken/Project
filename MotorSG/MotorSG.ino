@@ -15,6 +15,7 @@
 
 #define id_Zeit xx        //CAN id
 #define id_Temp xx        //CAN id
+#define id_Last xx        //CAN id
 
 //CAN0 CS auf Pin 10
 MCP_CAN CAN0(10);         // Set CS to pin 10
@@ -210,11 +211,23 @@ void ISR_recMSG(void)
   Serial.println("ISR_recMSG() Anfang");
   CAN0.readMsgBuf(&rxId, &len, rxBuf);      // Read data: len = data length, buf = data byte(s)
 
+  if (rxId == id_Last) {
+    mclast = rxBuf;
+    Serial.println("Gaspedal Stellung:");
+
+    
+    
+    sprintf(msgString, "Standard ID: 0x%.3lX       DLC: %1d  Data:", rxId, len);            //speichert standard frame
+    Serial.print(msgString);
+
+  }
+
+/*
   //Pruefen ob standard(11bit) oder extended(29bit) Frame
   if((rxId & 0x80000000) == 0x80000000)
-    sprintf(msgString, "Extended ID: 0x%.8lX  DLC: %1d  Data:", (rxId & 0x1FFFFFFF), len);  //speichert standard Frame
+    sprintf(msgString, "Extended ID: 0x%.8lX  DLC: %1d  Data:", (rxId & 0x1FFFFFFF), len);  //speichert extended Frame
   else
-    sprintf(msgString, "Standard ID: 0x%.3lX       DLC: %1d  Data:", rxId, len);            //speichert extended frame
+    sprintf(msgString, "Standard ID: 0x%.3lX       DLC: %1d  Data:", rxId, len);            //speichert standard frame
 
   Serial.print(msgString);  //String ausgeben
   //Pruefen ob remote request frame
@@ -224,7 +237,7 @@ void ISR_recMSG(void)
       Serial.print(msgString);
     }
 
-  //Standard MSG
+  /Payload
   else
     {
       for(byte i = 0; i<len; i++){
@@ -234,6 +247,9 @@ void ISR_recMSG(void)
    Serial.println("");
    Serial.println("ISR_recMSG() Ende");
  }
+
+
+ */
 }
 
 //MSG werden nur durch inhalt von data und id bestimmt
