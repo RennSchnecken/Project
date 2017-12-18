@@ -6,16 +6,21 @@
 #include <RTClib.h>               //RTC
 
 //Makro
-#define CAN0_INT 2       //Interrupt für CAN Pin
-#define ONE_WIRE_BUS 9   //OneWire Pin
-#define ONE_WIRE_RES 9   //Aufloesung Temperatur in Bit
-#define MC_EIN  6        //Motor Controller "an" Pin
-#define MC_LAST 7        //Motor Controller Lastzustand Pin
-#define LUEFTER 8        //Motor und Gehaeuseluefter Pin
-
-#define id_Zeit 0x01     //CAN id
-#define id_Temp 0x02     //CAN id
-#define id_Last 3     //CAN id
+#define CAN0_INT 2        //Interrupt für CAN Pin
+#define ONE_WIRE_BUS 9    //OneWire Pin
+#define ONE_WIRE_RES 9    //Aufloesung Temperatur in Bit
+#define MC_EIN  6         //Motor Controller "an" Pin
+#define MC_LAST 7         //Motor Controller Lastzustand Pin
+#define LUEFTER 8         //Motor und Gehaeuseluefter Pin
+#define M_HALL  12        //Motor Strom Hallsensor Pin
+#define MC_SECURE_TIMER 20  //Timer zur Gaspedal Sicherheit
+ 
+#define id_ZEIT     0x120     //CAN id
+#define id_TEMP     0x121     //CAN id
+#define id_LAST     0x111     //CAN id
+#define id_GESCHW   0x112     //CAN id
+#define id_MAMPERE  0x113     //CAN id
+#define id_KL15     0x110     //CAN id
 
 //CAN0 CS auf Pin 10
 MCP_CAN CAN0(10);         // Set CS to pin 10
@@ -27,10 +32,17 @@ char daysOfTheWeek[7][12] = {"Sonntag", "Montag", "Dienstag", "Mittwoch", "Donne
 //Globale Variablen
 volatile int klemme15 = 0;
 volatile int mclast = 0;
+volatile int geschw = 0;
+volatile float mampere = 20;
+int mc_secure = 0;
+int do_mcontrol = 0;
+int kl15 = 0;
+
 
 //Globale Variable für CAN Botschaft
 byte data[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-INT32U id;
+INT8U dlc;
+long unsigned int id;
 long unsigned int rxId;
 unsigned char len = 0;
 unsigned char rxBuf[8];
@@ -47,6 +59,7 @@ DeviceAddress TempSens1, TempSens2, TempSens3, TempSens4, TempSens5;
 void setup(void)
 {
   Serial.begin(115200);
+  delay(3000); //Serielle Verbindung aufbauen lassen
   Serial.println("Setup Anfang");
 
   //Initialisiere MCP2515 mit 8MHz und 125kb/s.
@@ -195,11 +208,17 @@ void printData(DeviceAddress deviceAddress)
   Serial.println();
 }
 
-void getTemps(void)
+void sendTemps(void)
 {
   Serial.print("Temperatursensoren auslesen...");
   sensors.requestTemperatures();
   Serial.println("Temperatursensoren ausgelesen.");
+  //Temperaturen senden
+  noInterrupts();
+  put_data(TempSens1, TempSens2, TempSens3, TempSens4, TempSens5,0,0,0);
+  sendMSG(id_TEMP, 5);
+  interrupts();
+
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////
 //CAN Funktionen
@@ -210,19 +229,35 @@ void ISR_recMSG(void)
   Serial.println("ISR_recMSG() Anfang");
   CAN0.readMsgBuf(&rxId, &len, rxBuf);      // Read data: len = data length, buf = data byte(s)
 
-  //if (rxId == id_Last) {
+  switch(rxId)
+  {
+
+    case(id_LAST):
+    if(kl15){
     Serial.print("Gaspedal Stellung:");
     mclast = rxBuf[0];
-    Serial.println(mclast);
+    do_mcontrol = 1;
+    }
+    break;
     
-    sprintf(msgString, "Standard ID: 0x%.3lX       DLC: %1d  Data:", rxId, len);            //speichert standard frame
-    Serial.print(msgString);
-    
-    for(byte i = 0; i<len; i++){
-        sprintf(msgString, " 0x%.2X", rxBuf[i]);
-        Serial.print(msgString);}
+    case(id_KL15):
+    Serial.print("Zuendung:");
+    noInterrupts();
+    kl15 = rxBuf[0]; 
+    interrupts();
+    break;
 
- // }
+    default:
+    break;
+  }
+
+  for(byte i = 0; i<len; i++)
+  {
+    sprintf(msgString, " 0x%.2X", rxBuf[i]);
+    Serial.println(msgString);
+  }
+  Serial.println("ISR_recMSG() Ende");
+}
 
 /*
   //Pruefen ob standard(11bit) oder extended(29bit) Frame
@@ -252,14 +287,14 @@ void ISR_recMSG(void)
 
 
  */
-}
+
 
 //MSG werden nur durch inhalt von data und id bestimmt
-void sendMSG(INT32U id) //ID für MSG
+void sendMSG(INT32U id, INT8U dlc) //ID für MSG
 {
   Serial.println("sendMSG() Anfang");
   //Send Data:  ID, CAN Frame / Extended Frame, Data length = 8 bytes, datab (global 8 byte)
-  byte sndStat = CAN0.sendMsgBuf(id, 0, 8, data);
+  byte sndStat = CAN0.sendMsgBuf(id, 0, dlc, data);
   Serial.println("Message Sent Successfully!");
   Serial.println("sendMSG() Ende");
 }
@@ -277,7 +312,41 @@ void put_data(byte byte0, byte byte1, byte byte2, byte byte3, byte byte4, byte b
   data[7] =  byte7;
   Serial.println("put_data Ende");
  }
+
  
+////////////////////////////////////////////////////////////////////////////////////////////////
+//Motor Steuerung
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+ void f_mcontrol(void){
+  Serial.println("f_mcontrol");
+  if (mc_secure < MC_SECURE_TIMER){
+    analogWrite(MC_LAST, mclast);
+  }
+  else{
+    analogWrite(MC_LAST, 0);
+  }
+  mc_secure = 0;
+  do_mcontrol = 0;
+ }
+ 
+////////////////////////////////////////////////////////////////////////////////////////////////
+//Strommessung
+////////////////////////////////////////////////////////////////////////////////////////////////
+ void f_mampere(void){
+  //mampere = (analogRead(M_HALL)/0.2);
+  data[0] = mampere;
+  sendMSG(id_MAMPERE, 1);
+ }
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+//Geschwindigkeit
+////////////////////////////////////////////////////////////////////////////////////////////////
+void f_geschw(void){
+  data[0] = 99;
+  sendMSG(id_GESCHW, 1);
+} 
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 //RTC
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -299,8 +368,8 @@ void printZeit(void)
     Serial.print(now.second(), DEC);
     Serial.println("Uhr");
     //Zeit per CAN senden
-    put_data(now.second(),now.minute(),now.hour(),now.day(),now.month(),now.dayOfTheWeek(),0x12,0);
-    sendMSG(id_Zeit);
+    put_data(now.second(),now.minute(),now.hour(),now.day(),now.dayOfTheWeek(),now.month(),0x12,0);
+    sendMSG(id_ZEIT, 7);
   
 /* Fuer Funktionen die alle x ablaufen sollen
 DateTime future (now + TimeSpan(3,2,11,33)); // tage, stunden, minuten, Sekunden
@@ -308,54 +377,82 @@ Serial.print(future.minute(), DEC);
 future statt now gibt den Zeitpunkt in der Zukunft auf den man wartet aus
 */
 }
- //Interrupts einschalten vor main()
 ////////////////////////////////////////////////////////////////////////////////////////////////
 //main()
 ////////////////////////////////////////////////////////////////////////////////////////////////
-
 void loop()
 {
+  int i_kl15;
 
-  //Temperaturen abfragen
-  getTemps();
+  
+  //Temperaturen abfragen und senden
+  //sendTemps();
+  
+  //Zeit ausgeben Serial und CAN
+  //printZeit();
+    Serial.println("Start");
 
-  //Zeit ausgeben Serial
-  printZeit();
-
-  //Aufgaben bei Kl.15 ein
-  if (klemme15 == 1)
+////////////////////////////////////////////////////////////////////////////////////////////////
+//KL15 Start 
+////////////////////////////////////////////////////////////////////////////////////////////////
+  while(kl15) 
   {
     Serial.println("Kl.15 eingeschaltet.");
     noInterrupts();
-    digitalWrite(LUEFTER, HIGH);
+    //digitalWrite(LUEFTER, HIGH);
     digitalWrite(MC_EIN, 1);
-    analogWrite(MC_LAST, mclast);
-    klemme15 = 2;
     interrupts();
+    
+////////////////////////////////////////////////////////////////////////////////////////////////
+//KL15 
+////////////////////////////////////////////////////////////////////////////////////////////////
+    while(kl15)            
+    {
+      if(do_mcontrol)   //Wenn neue CAN Botschaft(Last) - Controller einstellen
+      {    
+        f_mcontrol();
+      }
+
+
+
+      //////////////////
+      //CAN Botschaften
+      //////////////////     
+ /*     if(!(i_kl15%2)){    //Ampere senden alle 2 Zyklen
+        f_mampere();
+      }
+  */    
+      if(!(i_kl15%4)){       //Geschwindigkeit senden alle 4 Zyklen
+        f_geschw();
+        f_mampere();
+      }
+      
+      if (i_kl15 > 1000)   //Zeit und Temperatur senden alle x Zyklen
+      {
+        printZeit();
+        sendTemps();
+        interrupts();
+        i_kl15 = 0;
+        interrupts();
+      }
+
+      interrupts();
+      mc_secure++;
+      i_kl15++;
+      interrupts();
+      delay(3);         //Zeitspanne für ISR
+      
+      if(!kl15){break;} //inner kl15 verlassen
+    }
+    if(!kl15){break;}   //aeussere kl15 verlassen
   }
 
-  //Aufgaben bei Kl.15 ein und einschalten durchgelaufen
-  if (klemme15 == 2)
-  {
-    Serial.println("Kl.15 Status 2.");
-    //Motor Last einstellen -->Auslagern in Funktion bei ISR CAN
-    noInterrupts();
-    analogWrite(MC_LAST, mclast);
-    interrupts();
 
-  /*  //Temperaturen senden
-    noInterrupts();
-    data = {TempSens1, TempSens2, TempSens3, TempSens4, TempSens5}
-    sendMSG(id_Temp);
-    interrupts();
-*/
-
-
-  }
-
-
+////////////////////////////////////////////////////////////////////////////////////////////////
+//KL15 aus
+////////////////////////////////////////////////////////////////////////////////////////////////
   //Aufgaben bei Kl.15 aus
-  if (klemme15 == 0)
+  while(!kl15)
   {
     Serial.println("Kl.15 ausgeschaltet.");
     noInterrupts();
@@ -364,18 +461,21 @@ void loop()
     digitalWrite(MC_EIN, 0);
     interrupts();
     Serial.println("Warten auf Zuendung ein.");
-    //while(klemme15 == 0);
-
+    
+    while(!kl15){       //Warten auf kl15 ein
+      if(kl15){break;}  //Warten verlassen
+      delay(50);
+    } 
+    if(kl15){break;}    //Zurueck in root main
   }
 
 
-  //CAN Botschaft senden
+ /* //CAN Botschaft senden
   put_data(0x03, 0x03, 0x02, 0x01, 0x02, 0x03, 0x04, 0x05);
-  sendMSG(0x12);
+  sendMSG(0x12, 8);
   
   //CAN Botschaft senden
   put_data(0x02, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07);
-  sendMSG(0x10);
-
-
+  sendMSG(0x10, 8);
+  */
 }
