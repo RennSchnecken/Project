@@ -6,16 +6,16 @@
 #include <RTClib.h>               //RTC
 
 //Makro
-#define CAN0_INT 2        //Interrupt für CAN Pin
-#define ONE_WIRE_BUS xx   //OneWire Pin
-#define ONE_WIRE_RES 9    //Aufloesung Temperatur in Bit
-#define MC_EIN  xx        //Motor Controller "an" Pin
-#define MC_LAST xx        //Motor Controller Lastzustand Pin
-#define LUEFTER xx        //Motor und Gehaeuseluefter Pin
+#define CAN0_INT 2       //Interrupt für CAN Pin
+#define ONE_WIRE_BUS 9   //OneWire Pin
+#define ONE_WIRE_RES 9   //Aufloesung Temperatur in Bit
+#define MC_EIN  6        //Motor Controller "an" Pin
+#define MC_LAST 7        //Motor Controller Lastzustand Pin
+#define LUEFTER 8        //Motor und Gehaeuseluefter Pin
 
-#define id_Zeit xx        //CAN id
-#define id_Temp xx        //CAN id
-#define id_Last xx        //CAN id
+#define id_Zeit 0x01     //CAN id
+#define id_Temp 0x02     //CAN id
+#define id_Last 3     //CAN id
 
 //CAN0 CS auf Pin 10
 MCP_CAN CAN0(10);         // Set CS to pin 10
@@ -29,12 +29,12 @@ volatile int klemme15 = 0;
 volatile int mclast = 0;
 
 //Globale Variable für CAN Botschaft
-volatile byte data[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+byte data[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 INT32U id;
-volatile long unsigned int rxId;
+long unsigned int rxId;
 unsigned char len = 0;
-volatile unsigned char rxBuf[8];
-volatile char msgString[128];      //Array für Datenempfang
+unsigned char rxBuf[8];
+char msgString[128];      //Array für Datenempfang
 
 //OneWire mit Dallas Sensor
 OneWire oneWire(ONE_WIRE_BUS);
@@ -49,28 +49,27 @@ void setup(void)
   Serial.begin(115200);
   Serial.println("Setup Anfang");
 
-  //Initialisiere MCP2515 mit 8MHz und 50kb/s.
-  //MCP_ANY(canIDMode):CAN configuration für Tranceiver;  CAN_50KBPS(canSpeed): CAN Geschwindigkeit; MCP_8MHZ(canClock):verbauter Quarz auf Board;
-  if(CAN0.begin(MCP_ANY, CAN_50KBPS, MCP_8MHZ) == CAN_OK) Serial.println("MCP2515 Initialized Successfully!");
+  //Initialisiere MCP2515 mit 8MHz und 125kb/s.
+  //MCP_ANY(canIDMode):CAN configuration für Tranceiver;  CAN_125KBPS(canSpeed): CAN Geschwindigkeit; MCP_8MHZ(canClock):verbauter Quarz auf Board;
+  if(CAN0.begin(MCP_ANY, CAN_125KBPS, MCP_8MHZ) == CAN_OK) Serial.println("MCP2515 Initialized Successfully!");
     else Serial.println("Initialisierungsfehler CAN Tranceiver!");
   CAN0.setMode(MCP_NORMAL);   // Change to normal mode to allow messages to be transmitted
 
   //Pin configuration
   pinMode(LUEFTER, OUTPUT);
   digitalWrite(LUEFTER, LOW);
-  Serial.println("Luefter Pin:" LUEFTER);
-  pinMode(CAN0_INT, INPUT);
-  Serial.println("CAN Interrupt Pin:" CAN0_INT);
+  //Serial.println("Luefter Pin: %d",LUEFTER );
+  pinMode(CAN0_INT, INPUT_PULLUP);
+  //Serial.println("CAN Interrupt Pin: %d", CAN0_INT);
   pinMode(MC_EIN, OUTPUT);
   digitalWrite(MC_EIN, LOW);
-  Serial.println("Motor Controller ein/aus Pin:" MC_EIN);
+  //Serial.println("Motor Controller ein/aus Pin:" MC_EIN);
   pinMode(MC_LAST, OUTPUT);
   digitalWrite(MC_LAST, LOW);
-  Serial.println("Motor Controller Lastzustand Pin:" MC_LAST);
+  //Serial.println("Motor Controller Lastzustand Pin:" MC_LAST);
 
   //Interrupts / ISR
   attachInterrupt(digitalPinToInterrupt(CAN0_INT), ISR_recMSG, FALLING);
-  noInterrupts(); //Bis zur main()
 
   ////////////////////////////////////////////////////////////////////////////////////////////////
   //OneWire
@@ -91,7 +90,7 @@ void setup(void)
 
   //OneWire Sensor Zuweisung bzw. Pruefung ob vorhanden
   oneWire.reset_search();
-  Serial.println("OneWire Suche zurueckgesetzt.");
+  /*Serial.println("OneWire Suche zurueckgesetzt.");
   Serial.println("OneWire Sensoren zuweisen.");
   if (!oneWire.search(TempSens1)) Serial.println("Unable to find address for "TempSens1);
   if (!oneWire.search(TempSens2)) Serial.println("Unable to find address for "TempSens2);
@@ -142,7 +141,7 @@ void setup(void)
   Serial.print("Temperatur Sensor 5 Aufloesung: ");
   Serial.print(sensors.getResolution(TempSens5), DEC);
   Serial.println();
-
+*/
   ////////////////////////////////////////////////////////////////////////////////////////////////
   //RTC
   ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -211,16 +210,19 @@ void ISR_recMSG(void)
   Serial.println("ISR_recMSG() Anfang");
   CAN0.readMsgBuf(&rxId, &len, rxBuf);      // Read data: len = data length, buf = data byte(s)
 
-  if (rxId == id_Last) {
-    mclast = rxBuf;
-    Serial.println("Gaspedal Stellung:");
-
-    
+  //if (rxId == id_Last) {
+    Serial.print("Gaspedal Stellung:");
+    mclast = rxBuf[0];
+    Serial.println(mclast);
     
     sprintf(msgString, "Standard ID: 0x%.3lX       DLC: %1d  Data:", rxId, len);            //speichert standard frame
     Serial.print(msgString);
+    
+    for(byte i = 0; i<len; i++){
+        sprintf(msgString, " 0x%.2X", rxBuf[i]);
+        Serial.print(msgString);}
 
-  }
+ // }
 
 /*
   //Pruefen ob standard(11bit) oder extended(29bit) Frame
@@ -258,15 +260,24 @@ void sendMSG(INT32U id) //ID für MSG
   Serial.println("sendMSG() Anfang");
   //Send Data:  ID, CAN Frame / Extended Frame, Data length = 8 bytes, datab (global 8 byte)
   byte sndStat = CAN0.sendMsgBuf(id, 0, 8, data);
-  if(sndStat == CAN_OK){
-    Serial.println("Message Sent Successfully!");
-  } else {
-    Serial.println("Error Sending Message...");
-  }
-  delay(300);   // send data per 300ms
+  Serial.println("Message Sent Successfully!");
   Serial.println("sendMSG() Ende");
 }
-#
+
+
+void put_data(byte byte0, byte byte1, byte byte2, byte byte3, byte byte4, byte byte5, byte byte6, byte byte7){
+  Serial.println("put_data Anfang");
+  data[0] =  byte0;
+  data[1] =  byte1;
+  data[2] =  byte2;
+  data[3] =  byte3;
+  data[4] =  byte4;
+  data[5] =  byte5;
+  data[6] =  byte6;
+  data[7] =  byte7;
+  Serial.println("put_data Ende");
+ }
+ 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 //RTC
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -287,6 +298,9 @@ void printZeit(void)
     Serial.print(':');
     Serial.print(now.second(), DEC);
     Serial.println("Uhr");
+    //Zeit per CAN senden
+    put_data(now.second(),now.minute(),now.hour(),now.day(),now.month(),now.dayOfTheWeek(),0x12,0);
+    sendMSG(id_Zeit);
   
 /* Fuer Funktionen die alle x ablaufen sollen
 DateTime future (now + TimeSpan(3,2,11,33)); // tage, stunden, minuten, Sekunden
@@ -294,15 +308,13 @@ Serial.print(future.minute(), DEC);
 future statt now gibt den Zeitpunkt in der Zukunft auf den man wartet aus
 */
 }
-
-interrupts(); //Interrupts einschalten vor main()
+ //Interrupts einschalten vor main()
 ////////////////////////////////////////////////////////////////////////////////////////////////
 //main()
 ////////////////////////////////////////////////////////////////////////////////////////////////
-void main(void)
+
+void loop()
 {
-
-
 
   //Temperaturen abfragen
   getTemps();
@@ -331,25 +343,13 @@ void main(void)
     analogWrite(MC_LAST, mclast);
     interrupts();
 
-    //Zeit per CAN senden
-    noInterrupts();
-    data = rtc.now();
-    sendMSG(id_Zeit);
-    interrupts();
-
-    //Temperaturen senden
+  /*  //Temperaturen senden
     noInterrupts();
     data = {TempSens1, TempSens2, TempSens3, TempSens4, TempSens5}
     sendMSG(id_Temp);
     interrupts();
+*/
 
-
-    noInterrupts();
-
-    interrupts();
-    noInterrupts();
-
-    interrupts();
 
   }
 
@@ -364,21 +364,18 @@ void main(void)
     digitalWrite(MC_EIN, 0);
     interrupts();
     Serial.println("Warten auf Zuendung ein.");
-    while(klemme15 == 0);
+    //while(klemme15 == 0);
 
   }
 
 
-
   //CAN Botschaft senden
-  data = {0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03};
+  put_data(0x03, 0x03, 0x02, 0x01, 0x02, 0x03, 0x04, 0x05);
   sendMSG(0x12);
-
+  
   //CAN Botschaft senden
-  data = {0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01};
-  sendMSG(0x01);
+  put_data(0x02, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07);
+  sendMSG(0x10);
 
 
-
-return 0;
 }
