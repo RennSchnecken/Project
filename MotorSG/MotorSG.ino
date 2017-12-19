@@ -231,7 +231,6 @@ void ISR_recMSG(void)
 
   switch(rxId)
   {
-
     case(id_LAST):
     if(kl15){
     Serial.print("Gaspedal Stellung:");
@@ -404,39 +403,40 @@ void loop()
     interrupts();
     
 ////////////////////////////////////////////////////////////////////////////////////////////////
-//KL15 
+//KL15 ein
 ////////////////////////////////////////////////////////////////////////////////////////////////
-    while(kl15)            
+    while(kl15)
     {
       if(do_mcontrol)   //Wenn neue CAN Botschaft(Last) - Controller einstellen
-      {    
+      {
+        noInterrupts();
         f_mcontrol();
+        interrupts();
       }
-
-
 
       //////////////////
       //CAN Botschaften
       //////////////////     
  /*     if(!(i_kl15%2)){    //Ampere senden alle 2 Zyklen
         f_mampere();
-      }
-  */    
-      if(!(i_kl15%4)){       //Geschwindigkeit senden alle 4 Zyklen
+      }*/    
+      if(!(i_kl15%4)){//Geschwindigkeit senden alle 4 Zyklen
+        noInterrupts();
         f_geschw();
         f_mampere();
+        interrupts();
       }
       
       if (i_kl15 > 1000)   //Zeit und Temperatur senden alle x Zyklen
       {
+        interrupts();
         printZeit();
         sendTemps();
-        interrupts();
         i_kl15 = 0;
         interrupts();
       }
 
-      interrupts();
+     interrupts();
       mc_secure++;
       i_kl15++;
       interrupts();
