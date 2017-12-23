@@ -9,11 +9,12 @@
 #define CAN0_INT 2        //Interrupt für CAN Pin
 #define ONE_WIRE_BUS 9    //OneWire Pin
 #define ONE_WIRE_RES 9    //Aufloesung Temperatur in Bit
-#define MC_EIN  6         //Motor Controller "an" Pin
-#define MC_LAST 7         //Motor Controller Lastzustand Pin
-#define LUEFTER 8         //Motor und Gehaeuseluefter Pin
-#define M_HALL  12        //Motor Strom Hallsensor Pin
-#define MC_SECURE_TIMER 20  //Timer zur Gaspedal Sicherheit
+#define MC_EIN  3         //Motor Controller "an" Pin
+#define MC_LAST 5         //Motor Controller Lastzustand Pin
+#define LUEFTER 6         //Motor und Gehaeuseluefter Pin
+#define M_HALL1  A1       //Motor Strom Hallsensor Pin
+#define M_HALL2  A2       //Motor Strom Hallsensor Pin
+#define MC_SECURE_TIMER 200  //Timer zur Gaspedal Sicherheit
  
 #define id_ZEIT     0x120     //CAN id
 #define id_TEMP     0x121     //CAN id
@@ -210,9 +211,9 @@ void printData(DeviceAddress deviceAddress)
 
 void sendTemps(void)
 {
-  Serial.print("Temperatursensoren auslesen...");
+  //Serial.print("Temperatursensoren auslesen...");
   sensors.requestTemperatures();
-  Serial.println("Temperatursensoren ausgelesen.");
+  //Serial.println("Temperatursensoren ausgelesen.");
   //Temperaturen senden
   noInterrupts();
   put_data(TempSens1, TempSens2, TempSens3, TempSens4, TempSens5,0,0,0);
@@ -226,16 +227,17 @@ void sendTemps(void)
 //Interrupt fuer CAN
 void ISR_recMSG(void)
 {
-  Serial.println("ISR_recMSG() Anfang");
+  //Serial.println("ISR_recMSG() Anfang");
   CAN0.readMsgBuf(&rxId, &len, rxBuf);      // Read data: len = data length, buf = data byte(s)
 
   switch(rxId)
   {
     case(id_LAST):
-    if(kl15){
+    if(kl15  && !do_mcontrol){
     Serial.print("Gaspedal Stellung:");
-    mclast = rxBuf[0];
+    mclast = (rxBuf[0]*2.55);
     do_mcontrol = 1;
+    Serial.print(mclast);
     }
     break;
     
@@ -255,7 +257,7 @@ void ISR_recMSG(void)
     sprintf(msgString, " 0x%.2X", rxBuf[i]);
     Serial.println(msgString);
   }
-  Serial.println("ISR_recMSG() Ende");
+  //Serial.println("ISR_recMSG() Ende");
 }
 
 /*
@@ -291,16 +293,16 @@ void ISR_recMSG(void)
 //MSG werden nur durch inhalt von data und id bestimmt
 void sendMSG(INT32U id, INT8U dlc) //ID für MSG
 {
-  Serial.println("sendMSG() Anfang");
+  //Serial.println("sendMSG() Anfang");
   //Send Data:  ID, CAN Frame / Extended Frame, Data length = 8 bytes, datab (global 8 byte)
   byte sndStat = CAN0.sendMsgBuf(id, 0, dlc, data);
-  Serial.println("Message Sent Successfully!");
-  Serial.println("sendMSG() Ende");
+  //Serial.println("Message Sent Successfully!");
+  //Serial.println("sendMSG() Ende");
 }
 
 
 void put_data(byte byte0, byte byte1, byte byte2, byte byte3, byte byte4, byte byte5, byte byte6, byte byte7){
-  Serial.println("put_data Anfang");
+  //Serial.println("put_data Anfang");
   data[0] =  byte0;
   data[1] =  byte1;
   data[2] =  byte2;
@@ -309,7 +311,7 @@ void put_data(byte byte0, byte byte1, byte byte2, byte byte3, byte byte4, byte b
   data[5] =  byte5;
   data[6] =  byte6;
   data[7] =  byte7;
-  Serial.println("put_data Ende");
+  //Serial.println("put_data Ende");
  }
 
  
@@ -319,23 +321,34 @@ void put_data(byte byte0, byte byte1, byte byte2, byte byte3, byte byte4, byte b
 
  void f_mcontrol(void){
   Serial.println("f_mcontrol");
-  if (mc_secure < MC_SECURE_TIMER){
+  //if (mc_secure < MC_SECURE_TIMER){
     analogWrite(MC_LAST, mclast);
-  }
+      Serial.println("Last:");
+      Serial.println(mclast);
+
+  /*}
   else{
     analogWrite(MC_LAST, 0);
   }
-  mc_secure = 0;
+ */ mc_secure = 0;
   do_mcontrol = 0;
+    Serial.println("f_mcontrol Ende");
+
  }
  
 ////////////////////////////////////////////////////////////////////////////////////////////////
 //Strommessung
 ////////////////////////////////////////////////////////////////////////////////////////////////
  void f_mampere(void){
-  //mampere = (analogRead(M_HALL)/0.2);
+  mampere = (analogRead(M_HALL1)/0.2);
   data[0] = mampere;
-  sendMSG(id_MAMPERE, 1);
+  data[1] = analogRead(M_HALL1);
+  
+  mampere = (analogRead(M_HALL2)/0.2);
+  data[2] = mampere;
+  data[3] = analogRead(M_HALL2);
+  
+  sendMSG(id_MAMPERE, 4);
  }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -352,7 +365,7 @@ void f_geschw(void){
 void printZeit(void)
 {
   DateTime now = rtc.now();
-    Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+  /*  Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
     Serial.print(", ");
     Serial.print(now.day(), DEC);
     Serial.print(".");
@@ -366,6 +379,7 @@ void printZeit(void)
     Serial.print(':');
     Serial.print(now.second(), DEC);
     Serial.println("Uhr");
+    */
     //Zeit per CAN senden
     put_data(now.second(),now.minute(),now.hour(),now.day(),now.dayOfTheWeek(),now.month(),0x12,0);
     sendMSG(id_ZEIT, 7);
@@ -464,7 +478,7 @@ void loop()
     
     while(!kl15){       //Warten auf kl15 ein
       if(kl15){break;}  //Warten verlassen
-      delay(50);
+      delay(100);
     } 
     if(kl15){break;}    //Zurueck in root main
   }
